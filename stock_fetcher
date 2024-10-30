@@ -1,0 +1,57 @@
+import requests
+import pandas as pd
+import yfinance as yf
+import tqdm
+from bs4 import BeautifulSoup
+from datetime import datetime
+import re
+
+# Step 1: Scrape the S&P 500 tickers from Wikipedia
+url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+response = requests.get(url)
+soup = BeautifulSoup(response.text, "html.parser")
+
+# Find the table on the page
+table = soup.find("table", {"id": "constituents"})
+
+# Extract ticker symbols and initialize data storage
+tickers = []
+for row in table.findAll("tr")[1:]:
+    ticker = row.findAll("td")[0].text.strip()
+    tickers.append(ticker)
+
+# Step 2: Fetch stock data for each ticker
+data = []
+for ticker in tqdm.tqdm(tickers, desc="Fetching stock data"):
+    stock = yf.Ticker(ticker)
+    info = stock.info
+    
+    # Attempt to fetch stock price from multiple possible fields
+    price = info.get("regularMarketPrice") or info.get("previousClose") or "N/A"
+    
+    # Collect stock data, including sector
+    data.append({
+        "Ticker": ticker,
+        "Name": info.get("shortName", "N/A"),
+        "Sector": info.get("sector", "N/A"),
+        "Price": price,
+        "Pays Dividend?": "Yes" if info.get("dividendYield", 0) > 0 else "No",
+        "P/E Ratio": info.get("trailingPE", "N/A"),
+        "Price to Book": info.get("priceToBook", "N/A")
+    })
+
+# Step 3: Convert to DataFrame and group by sector
+df = pd.DataFrame(data)
+sectors = df.groupby("Sector")
+
+# Step 4: Save to Excel with separate sheets for each sector
+today = datetime.now().strftime("%Y-%m-%d")  # Get today's date
+filename = f"SP500_Stock_Data_{today}.xlsx"
+
+with pd.ExcelWriter(filename) as writer:
+    for sector, sector_data in sectors:
+        # Clean invalid characters from sheet names
+        clean_sector_name = re.sub(r'[\\/*?:[\]]', '', sector)
+        sector_data.to_excel(writer, sheet_name=clean_sector_name, index=False)
+
+print(f"Data saved to {filename}")
